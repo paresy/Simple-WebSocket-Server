@@ -326,6 +326,7 @@ namespace SimpleWeb {
 
     public:
       std::function<StatusCode(std::shared_ptr<Connection>)> on_handshake;
+      std::function<std::string(std::shared_ptr<Connection>)> on_protocol;
       std::function<void(std::shared_ptr<Connection>)> on_open;
       std::function<void(std::shared_ptr<Connection>, std::shared_ptr<InMessage>)> on_message;
       std::function<void(std::shared_ptr<Connection>, int, const std::string &)> on_close;
@@ -568,6 +569,11 @@ namespace SimpleWeb {
               handshake << "Upgrade: websocket\r\n";
               handshake << "Connection: Upgrade\r\n";
               handshake << "Sec-WebSocket-Accept: " << Crypto::Base64::encode(sha1) << "\r\n";
+
+			  if(connection->header.find("Sec-WebSocket-Protocol") != connection->header.end())
+                if(regex_endpoint.second.on_protocol)
+                  handshake << "Sec-WebSocket-Protocol: " << regex_endpoint.second.on_protocol(connection) << "\r\n";
+
               for(auto &header_field : config.header)
                 handshake << header_field.first << ": " << header_field.second << "\r\n";
               handshake << "\r\n";
