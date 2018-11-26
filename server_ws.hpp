@@ -504,7 +504,7 @@ namespace SimpleWeb {
      */
     void upgrade(const std::shared_ptr<Connection> &connection) {
       connection->cancel_timeout();
-      auto lock = handler_runner->continue_lock();
+      auto lock = connection->handler_runner->continue_lock();
       if(!lock)
         return;
 
