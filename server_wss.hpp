@@ -47,7 +47,7 @@ namespace SimpleWeb {
     }
 
     void accept() override {
-      std::shared_ptr<Connection> connection(new Connection(handler_runner, config.timeout_idle, *io_service, context));
+      std::shared_ptr<Connection> connection(new Connection(handler_runner, config.timeout_idle, config.timeout_ping, *io_service, context));
 
       acceptor->async_accept(connection->socket->lowest_layer(), [this, connection](const error_code &ec) {
         auto lock = connection->handler_runner->continue_lock();
@@ -61,12 +61,12 @@ namespace SimpleWeb {
           asio::ip::tcp::no_delay option(true);
           connection->socket->lowest_layer().set_option(option);
 
-          connection->set_timeout(config.timeout_request);
+          connection->set_request_timeout(config.timeout_request);
           connection->socket->async_handshake(asio::ssl::stream_base::server, [this, connection](const error_code &ec) {
             auto lock = connection->handler_runner->continue_lock();
             if(!lock)
               return;
-            connection->cancel_timeout();
+            connection->cancel_request_timeout();
             if(!ec)
               read_handshake(connection);
           });

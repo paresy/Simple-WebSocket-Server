@@ -129,8 +129,8 @@ namespace SimpleWeb {
 
     private:
       template <typename... Args>
-      Connection(std::shared_ptr<ScopeRunner> handler_runner_, long timeout_idle, Args &&... args) noexcept
-          : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), strand(socket->get_io_service()), closed(false) {}
+      Connection(std::shared_ptr<ScopeRunner> handler_runner_, long timeout_idle, long timeout_ping, Args &&... args) noexcept
+          : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), timeout_ping(timeout_ping), strand(socket->get_io_service()), closed(false) {}
 
       std::shared_ptr<ScopeRunner> handler_runner;
 
@@ -140,7 +140,11 @@ namespace SimpleWeb {
       std::shared_ptr<InMessage> fragmented_in_message;
 
       long timeout_idle;
-      std::unique_ptr<asio::steady_timer> timer;
+      long timeout_ping;
+
+      std::unique_ptr<asio::steady_timer> timer_request;
+      std::unique_ptr<asio::steady_timer> timer_idle;
+      std::unique_ptr<asio::steady_timer> timer_ping;
       std::mutex timer_mutex;
 
       void close() noexcept {
@@ -149,40 +153,88 @@ namespace SimpleWeb {
         socket->lowest_layer().cancel(ec);
       }
 
-      void set_timeout(long seconds = -1) noexcept {
-        bool use_timeout_idle = false;
-        if(seconds == -1) {
-          use_timeout_idle = true;
-          seconds = timeout_idle;
-        }
-
+      void set_request_timeout(long seconds) noexcept {
         std::unique_lock<std::mutex> lock(timer_mutex);
 
         if(seconds == 0) {
-          timer = nullptr;
+          timer_request = nullptr;
           return;
         }
 
-        timer = std::unique_ptr<asio::steady_timer>(new asio::steady_timer(socket->get_io_service()));
-        timer->expires_from_now(std::chrono::seconds(seconds));
+        timer_request = std::unique_ptr<asio::steady_timer>(new asio::steady_timer(socket->get_io_service()));
+        timer_request->expires_from_now(std::chrono::seconds(seconds));
         std::weak_ptr<Connection> connection_weak(this->shared_from_this()); // To avoid keeping Connection instance alive longer than needed
-        timer->async_wait([connection_weak, use_timeout_idle](const error_code &ec) {
+        timer_request->async_wait([connection_weak](const error_code &ec) {
           if(!ec) {
             if(auto connection = connection_weak.lock()) {
-              if(use_timeout_idle)
-                connection->send_close(1000, "idle timeout"); // 1000=normal closure
-              else
-                connection->close();
+              connection->close();
             }
           }
         });
       }
 
-      void cancel_timeout() noexcept {
+      void cancel_request_timeout() noexcept {
         std::unique_lock<std::mutex> lock(timer_mutex);
-        if(timer) {
+        if(timer_request) {
           error_code ec;
-          timer->cancel(ec);
+          timer_request->cancel(ec);
+        }
+      }
+
+      void set_idle_timeout(long seconds) noexcept {
+        std::unique_lock<std::mutex> lock(timer_mutex);
+
+        if(seconds == 0) {
+          timer_idle = nullptr;
+          return;
+        }
+
+        timer_idle = std::unique_ptr<asio::steady_timer>(new asio::steady_timer(socket->get_io_service()));
+        timer_idle->expires_from_now(std::chrono::seconds(seconds));
+        std::weak_ptr<Connection> connection_weak(this->shared_from_this()); // To avoid keeping Connection instance alive longer than needed
+        timer_idle->async_wait([connection_weak](const error_code &ec) {
+          if(!ec) {
+            if(auto connection = connection_weak.lock()) {
+              connection->send_close(1000, "idle timeout"); // 1000=normal closure
+            }
+          }
+        });
+      }
+
+      void cancel_idle_timeout() noexcept {
+        std::unique_lock<std::mutex> lock(timer_mutex);
+        if(timer_idle) {
+          error_code ec;
+          timer_idle->cancel(ec);
+        }
+      }
+
+      void set_ping_timeout(long seconds) noexcept {
+        std::unique_lock<std::mutex> lock(timer_mutex);
+
+        if(seconds == 0) {
+          timer_idle = nullptr;
+          return;
+        }
+
+        timer_ping = std::unique_ptr<asio::steady_timer>(new asio::steady_timer(socket->get_io_service()));
+        timer_ping->expires_from_now(std::chrono::seconds(seconds));
+        std::weak_ptr<Connection> connection_weak(this->shared_from_this()); // To avoid keeping Connection instance alive longer than needed
+        timer_ping->async_wait([connection_weak](const error_code &ec) {
+          if(!ec) {
+            if(auto connection = connection_weak.lock()) {
+              auto empty_send_stream = std::make_shared<OutMessage>();
+              connection->send(empty_send_stream, nullptr, 137);
+            }
+          }
+        });
+      }
+
+      void cancel_ping_timeout() noexcept {
+        std::unique_lock<std::mutex> lock(timer_mutex);
+        if(timer_ping) {
+          error_code ec;
+          timer_ping->cancel(ec);
         }
       }
 
@@ -256,8 +308,10 @@ namespace SimpleWeb {
       /// fin_rsv_opcode: 129=one fragment, text, 130=one fragment, binary, 136=close connection.
       /// See http://tools.ietf.org/html/rfc6455#section-5.2 for more information.
       void send(const std::shared_ptr<OutMessage> &out_message, const std::function<void(const error_code &)> &callback = nullptr, unsigned char fin_rsv_opcode = 129) {
-        cancel_timeout();
-        set_timeout();
+        cancel_idle_timeout();
+        set_idle_timeout(timeout_idle);
+        cancel_ping_timeout();
+        set_ping_timeout(timeout_ping);
 
         auto out_header = std::make_shared<OutMessage>();
 
@@ -357,6 +411,8 @@ namespace SimpleWeb {
       long timeout_request = 5;
       /// Idle timeout. Defaults to no timeout.
       long timeout_idle = 0;
+      /// No message timeout before sending a server initiated ping. Defaults to no timeout.
+      long timeout_ping = 0;
       /// Maximum size of incoming messages. Defaults to architecture maximum.
       /// Exceeding this limit will result in a message_size error code and the connection will be closed.
       std::size_t max_message_size = std::numeric_limits<std::size_t>::max();
@@ -506,6 +562,7 @@ namespace SimpleWeb {
     void upgrade(const std::shared_ptr<Connection> &connection) {
       connection->handler_runner = handler_runner;
       connection->timeout_idle = config.timeout_idle;
+      connection->timeout_ping = config.timeout_ping;
       write_handshake(connection);
     }
 
@@ -528,9 +585,9 @@ namespace SimpleWeb {
     void read_handshake(const std::shared_ptr<Connection> &connection) {
       connection->read_remote_endpoint();
 
-      connection->set_timeout(config.timeout_request);
+      connection->set_request_timeout(config.timeout_request);
       asio::async_read_until(*connection->socket, connection->read_buffer, "\r\n\r\n", [this, connection](const error_code &ec, std::size_t /*bytes_transferred*/) {
-        connection->cancel_timeout();
+        connection->cancel_request_timeout();
         auto lock = connection->handler_runner->continue_lock();
         if(!lock)
           return;
@@ -586,9 +643,9 @@ namespace SimpleWeb {
           }
 
           connection->path_match = std::move(path_match);
-          connection->set_timeout(config.timeout_request);
+          connection->set_request_timeout(config.timeout_request);
           asio::async_write(*connection->socket, *write_buffer, [this, connection, write_buffer, &regex_endpoint, handshake_success](const error_code &ec, std::size_t /*bytes_transferred*/) {
-            connection->cancel_timeout();
+            connection->cancel_request_timeout();
             auto lock = connection->handler_runner->continue_lock();
             if(!lock)
               return;
@@ -727,8 +784,10 @@ namespace SimpleWeb {
 
           // If connection close
           if((fin_rsv_opcode & 0x0f) == 8) {
-            connection->cancel_timeout();
-            connection->set_timeout();
+            connection->cancel_idle_timeout();
+            connection->set_idle_timeout(config.timeout_idle);
+            connection->cancel_ping_timeout();
+            connection->set_ping_timeout(config.timeout_ping);
 
             int status = 0;
             if(length >= 2) {
@@ -743,8 +802,10 @@ namespace SimpleWeb {
           }
           // If ping
           else if((fin_rsv_opcode & 0x0f) == 9) {
-            connection->cancel_timeout();
-            connection->set_timeout();
+            connection->cancel_idle_timeout();
+            connection->set_idle_timeout(config.timeout_idle);
+            connection->cancel_ping_timeout();
+            connection->set_ping_timeout(config.timeout_ping);
 
             // Send pong
             auto empty_send_stream = std::make_shared<OutMessage>();
@@ -758,8 +819,10 @@ namespace SimpleWeb {
           }
           // If pong
           else if((fin_rsv_opcode & 0x0f) == 10) {
-            connection->cancel_timeout();
-            connection->set_timeout();
+            connection->cancel_idle_timeout();
+            connection->set_idle_timeout(config.timeout_idle);
+            connection->cancel_ping_timeout();
+            connection->set_ping_timeout(config.timeout_ping);
 
             if(endpoint.on_pong)
               endpoint.on_pong(connection);
@@ -773,8 +836,10 @@ namespace SimpleWeb {
             this->read_message(connection, endpoint);
           }
           else {
-            connection->cancel_timeout();
-            connection->set_timeout();
+            connection->cancel_idle_timeout();
+            connection->set_idle_timeout(config.timeout_idle);
+            connection->cancel_ping_timeout();
+            connection->set_ping_timeout(config.timeout_ping);
 
             if(endpoint.on_message)
               endpoint.on_message(connection, in_message);
@@ -791,8 +856,10 @@ namespace SimpleWeb {
     }
 
     void connection_open(const std::shared_ptr<Connection> &connection, Endpoint &endpoint) const {
-      connection->cancel_timeout();
-      connection->set_timeout();
+      connection->cancel_idle_timeout();
+      connection->set_idle_timeout(config.timeout_idle);
+      connection->cancel_ping_timeout();
+      connection->set_ping_timeout(config.timeout_ping);
 
       {
         std::unique_lock<std::mutex> lock(endpoint.connections_mutex);
@@ -804,8 +871,10 @@ namespace SimpleWeb {
     }
 
     void connection_close(const std::shared_ptr<Connection> &connection, Endpoint &endpoint, int status, const std::string &reason) const {
-      connection->cancel_timeout();
-      connection->set_timeout();
+      connection->cancel_idle_timeout();
+      connection->set_idle_timeout(config.timeout_idle);
+      connection->cancel_ping_timeout();
+      connection->set_ping_timeout(config.timeout_ping);
 
       {
         std::unique_lock<std::mutex> lock(endpoint.connections_mutex);
@@ -817,8 +886,10 @@ namespace SimpleWeb {
     }
 
     void connection_error(const std::shared_ptr<Connection> &connection, Endpoint &endpoint, const error_code &ec) const {
-      connection->cancel_timeout();
-      connection->set_timeout();
+      connection->cancel_idle_timeout();
+      connection->set_idle_timeout(config.timeout_idle);
+      connection->cancel_ping_timeout();
+      connection->set_ping_timeout(config.timeout_ping);
 
       {
         std::unique_lock<std::mutex> lock(endpoint.connections_mutex);
@@ -842,7 +913,7 @@ namespace SimpleWeb {
 
   protected:
     void accept() override {
-      std::shared_ptr<Connection> connection(new Connection(handler_runner, config.timeout_idle, *io_service));
+      std::shared_ptr<Connection> connection(new Connection(handler_runner, config.timeout_idle, config.timeout_ping, *io_service));
 
       acceptor->async_accept(*connection->socket, [this, connection](const error_code &ec) {
         auto lock = connection->handler_runner->continue_lock();
