@@ -638,7 +638,8 @@ namespace SimpleWeb {
             }
           }
           else {
-            handshake << "HTTP/1.1 " + SimpleWeb::status_code(status_code) + "\r\n\r\n";
+            handshake << "HTTP/1.1 " + SimpleWeb::status_code(status_code) + "\r\n";
+            handshake << "Content-Length: 0\r\n\r\n";
             handshake_success = false;
           }
 
