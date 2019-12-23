@@ -213,7 +213,7 @@ namespace SimpleWeb {
         std::unique_lock<std::mutex> lock(timer_mutex);
 
         if(seconds == 0) {
-          timer_idle = nullptr;
+          timer_ping = nullptr;
           return;
         }
 
