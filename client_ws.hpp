@@ -460,7 +460,7 @@ namespace SimpleWeb {
 
     void read_message(const std::shared_ptr<Connection> &connection, std::size_t num_additional_bytes) {
       connection->set_timeout();
-      asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(num_additional_bytes > 2 ? 0 : 2 - num_additional_bytes), [this, connection](const error_code &ec, std::size_t bytes_transferred) {
+      asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(num_additional_bytes > 2 ? 0 : 2 - num_additional_bytes), [this, connection, num_additional_bytes](const error_code &ec, std::size_t bytes_transferred) {
         connection->cancel_timeout();
         auto lock = connection->handler_runner->continue_lock();
         if(!lock)
@@ -470,7 +470,7 @@ namespace SimpleWeb {
             this->read_message(connection, 0);
             return;
           }
-          std::size_t num_additional_bytes = connection->in_message->streambuf.size() - bytes_transferred;
+          auto updated_num_additional_bytes = num_additional_bytes > 2 ? num_additional_bytes - 2 : 0;
 
           std::array<unsigned char, 2> first_bytes;
           connection->in_message->read(reinterpret_cast<char *>(&first_bytes[0]), 2);
@@ -490,14 +490,12 @@ namespace SimpleWeb {
           if(length == 126) {
             // 2 next bytes is the size of content
             connection->set_timeout();
-            asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(num_additional_bytes > 2 ? 0 : 2 - num_additional_bytes), [this, connection](const error_code &ec, std::size_t bytes_transferred) {
+            asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(updated_num_additional_bytes > 2 ? 0 : 2 - updated_num_additional_bytes), [this, connection, updated_num_additional_bytes](const error_code &ec, std::size_t /*bytes_transferred*/) {
               connection->cancel_timeout();
               auto lock = connection->handler_runner->continue_lock();
               if(!lock)
                 return;
               if(!ec) {
-                std::size_t num_additional_bytes = connection->in_message->streambuf.size() - bytes_transferred;
-
                 std::array<unsigned char, 2> length_bytes;
                 connection->in_message->read(reinterpret_cast<char *>(&length_bytes[0]), 2);
 
@@ -507,7 +505,7 @@ namespace SimpleWeb {
                   length += static_cast<std::size_t>(length_bytes[c]) << (8 * (num_bytes - 1 - c));
 
                 connection->in_message->length = length;
-                this->read_message_content(connection, num_additional_bytes);
+                this->read_message_content(connection, updated_num_additional_bytes > 2 ? updated_num_additional_bytes - 2 : 0);
               }
               else
                 this->connection_error(connection, ec);
@@ -516,14 +514,12 @@ namespace SimpleWeb {
           else if(length == 127) {
             // 8 next bytes is the size of content
             connection->set_timeout();
-            asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(num_additional_bytes > 8 ? 0 : 8 - num_additional_bytes), [this, connection](const error_code &ec, std::size_t bytes_transferred) {
+            asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(updated_num_additional_bytes > 8 ? 0 : 8 - updated_num_additional_bytes), [this, connection, updated_num_additional_bytes](const error_code &ec, std::size_t /*bytes_transferred*/) {
               connection->cancel_timeout();
               auto lock = connection->handler_runner->continue_lock();
               if(!lock)
                 return;
               if(!ec) {
-                std::size_t num_additional_bytes = connection->in_message->streambuf.size() - bytes_transferred;
-
                 std::array<unsigned char, 8> length_bytes;
                 connection->in_message->read(reinterpret_cast<char *>(&length_bytes[0]), 8);
 
@@ -533,7 +529,7 @@ namespace SimpleWeb {
                   length += static_cast<std::size_t>(length_bytes[c]) << (8 * (num_bytes - 1 - c));
 
                 connection->in_message->length = length;
-                this->read_message_content(connection, num_additional_bytes);
+                this->read_message_content(connection, updated_num_additional_bytes > 8 ? updated_num_additional_bytes - 8 : 0);
               }
               else
                 this->connection_error(connection, ec);
@@ -541,7 +537,7 @@ namespace SimpleWeb {
           }
           else {
             connection->in_message->length = length;
-            this->read_message_content(connection, num_additional_bytes);
+            this->read_message_content(connection, updated_num_additional_bytes);
           }
         }
         else
@@ -559,15 +555,15 @@ namespace SimpleWeb {
         return;
       }
       connection->set_timeout();
-      asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(num_additional_bytes > connection->in_message->length ? 0 : connection->in_message->length - num_additional_bytes), [this, connection](const error_code &ec, std::size_t bytes_transferred) {
+      asio::async_read(*connection->socket, connection->in_message->streambuf, asio::transfer_exactly(num_additional_bytes > connection->in_message->length ? 0 : connection->in_message->length - num_additional_bytes), [this, connection, num_additional_bytes](const error_code &ec, std::size_t /*bytes_transferred*/) {
         connection->cancel_timeout();
         auto lock = connection->handler_runner->continue_lock();
         if(!lock)
           return;
         if(!ec) {
-          std::size_t num_additional_bytes = connection->in_message->streambuf.size() - bytes_transferred;
+          auto updated_num_additional_bytes = num_additional_bytes > connection->in_message->length ? num_additional_bytes - connection->in_message->length : 0;
           std::shared_ptr<InMessage> next_in_message;
-          if(num_additional_bytes > 0) { // Extract bytes that are not extra bytes in buffer (only happen when several messages are sent in upgrade response)
+          if(updated_num_additional_bytes > 0) { // Extract bytes that are not extra bytes in buffer (only happen when several messages are sent in upgrade response)
             next_in_message = connection->in_message;
             connection->in_message = std::shared_ptr<InMessage>(new InMessage(next_in_message->fin_rsv_opcode, next_in_message->length));
 
@@ -605,7 +601,7 @@ namespace SimpleWeb {
 
             // Next message
             connection->in_message = next_in_message;
-            this->read_message(connection, num_additional_bytes);
+            this->read_message(connection, updated_num_additional_bytes);
           }
           // If pong
           else if((connection->in_message->fin_rsv_opcode & 0x0f) == 10) {
@@ -614,7 +610,7 @@ namespace SimpleWeb {
 
             // Next message
             connection->in_message = next_in_message;
-            this->read_message(connection, num_additional_bytes);
+            this->read_message(connection, updated_num_additional_bytes);
           }
           // If fragmented message and not final fragment
           else if((connection->in_message->fin_rsv_opcode & 0x80) == 0) {
@@ -633,7 +629,7 @@ namespace SimpleWeb {
 
             // Next message
             connection->in_message = next_in_message;
-            this->read_message(connection, num_additional_bytes);
+            this->read_message(connection, updated_num_additional_bytes);
           }
           else {
             if(this->on_message) {
@@ -655,7 +651,7 @@ namespace SimpleWeb {
             connection->in_message = next_in_message;
             // Only reset fragmented_message for non-control frames (control frames can be in between a fragmented message)
             connection->fragmented_in_message = nullptr;
-            this->read_message(connection, num_additional_bytes);
+            this->read_message(connection, updated_num_additional_bytes);
           }
         }
         else
