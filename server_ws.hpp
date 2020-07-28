@@ -79,13 +79,7 @@ namespace SimpleWeb {
       friend class SocketServer<socket_type>;
 
     public:
-      Connection(std::unique_ptr<socket_type> &&socket_) noexcept : socket(std::move(socket_)), timeout_idle(0), closed(false) {
-          try {
-              endpoint = socket->lowest_layer().remote_endpoint();
-          }
-          catch (...) {
-          }
-      }
+      Connection(std::unique_ptr<socket_type> &&socket_) noexcept : socket(std::move(socket_)), timeout_idle(0), closed(false) {}
 
       std::string method, path, query_string, http_version;
 
@@ -121,13 +115,7 @@ namespace SimpleWeb {
       /// Used to call Server::upgrade.
       template <typename... Args>
       Connection(std::shared_ptr<ScopeRunner> handler_runner_, long timeout_idle, Args &&... args) noexcept
-          : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), closed(false) {
-          try {
-              endpoint = socket->lowest_layer().remote_endpoint();
-          }
-          catch (...) {
-          }
-      }
+          : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), closed(false) {}
 
       std::shared_ptr<ScopeRunner> handler_runner;
 
@@ -542,6 +530,12 @@ namespace SimpleWeb {
     }
 
     void write_handshake(const std::shared_ptr<Connection> &connection) {
+      try {
+          connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
+      }
+      catch (...) {
+      }
+
       for(auto &regex_endpoint : endpoint) {
         regex::smatch path_match;
         if(regex::regex_match(connection->path, path_match, regex_endpoint.first)) {
