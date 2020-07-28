@@ -121,7 +121,13 @@ namespace SimpleWeb {
       /// Used to call Server::upgrade.
       template <typename... Args>
       Connection(std::shared_ptr<ScopeRunner> handler_runner_, long timeout_idle, Args &&... args) noexcept
-          : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), closed(false) {}
+          : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), closed(false) {
+          try {
+              endpoint = socket->lowest_layer().remote_endpoint();
+          }
+          catch (...) {
+          }
+      }
 
       std::shared_ptr<ScopeRunner> handler_runner;
 
