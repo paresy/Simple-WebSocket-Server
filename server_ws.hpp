@@ -79,7 +79,13 @@ namespace SimpleWeb {
       friend class SocketServer<socket_type>;
 
     public:
-      Connection(std::unique_ptr<socket_type> &&socket_) noexcept : socket(std::move(socket_)), timeout_idle(0), closed(false) {}
+      Connection(std::unique_ptr<socket_type> &&socket_) noexcept : socket(std::move(socket_)), timeout_idle(0), closed(false) {
+          try {
+              endpoint = socket->lowest_layer().remote_endpoint();
+          }
+          catch (...) {
+          }
+      }
 
       std::string method, path, query_string, http_version;
 
@@ -570,12 +576,6 @@ namespace SimpleWeb {
               return;
             if(status_code != StatusCode::information_switching_protocols)
               return;
-
-            try {
-              connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
-            }
-            catch(...) {
-            }
 
             if(!ec) {
               connection_open(connection, regex_endpoint.second);
