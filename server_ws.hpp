@@ -565,8 +565,8 @@ namespace SimpleWeb {
             }
           }
           if (status_code != StatusCode::information_switching_protocols) {
-            handshake << "HTTP/1.1 " + SimpleWeb::status_code(status_code) + "\r\n";
-            handshake << "Content-Length: 0\r\n\r\n";
+            ostream << "HTTP/1.1 " + SimpleWeb::status_code(status_code) + "\r\n";
+            ostream << "Content-Length: 0\r\n\r\n";
           }
 
           connection->path_match = std::move(path_match);
