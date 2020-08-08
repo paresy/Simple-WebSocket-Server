@@ -91,10 +91,20 @@ namespace SimpleWeb {
         return endpoint;
       }
 
+      asio::ip::tcp::endpoint local_endpoint() const noexcept {
+        try {
+          if(auto connection = this->connection.lock())
+            return connection->socket->lowest_layer().local_endpoint();
+        }
+        catch(...) {
+        }
+        return asio::ip::tcp::endpoint();
+      }
+
       /// Deprecated, please use remote_endpoint().address().to_string() instead.
       DEPRECATED std::string remote_endpoint_address() const noexcept {
         try {
-          return socket->lowest_layer().remote_endpoint().address().to_string();
+          return endpoint.address().to_string();
         }
         catch(...) {
         }
@@ -104,7 +114,7 @@ namespace SimpleWeb {
       /// Deprecated, please use remote_endpoint().port() instead.
       DEPRECATED unsigned short remote_endpoint_port() const noexcept {
         try {
-          return socket->lowest_layer().remote_endpoint().port();
+          return endpoint.port();
         }
         catch(...) {
         }
@@ -530,12 +540,6 @@ namespace SimpleWeb {
     }
 
     void write_handshake(const std::shared_ptr<Connection> &connection) {
-      try {
-          connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
-      }
-      catch (...) {
-      }
-
       for(auto &regex_endpoint : endpoint) {
         regex::smatch path_match;
         if(regex::regex_match(connection->path, path_match, regex_endpoint.first)) {
@@ -553,6 +557,12 @@ namespace SimpleWeb {
             static auto ws_magic_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
             auto sha1 = Crypto::sha1(key_it->second + ws_magic_string);
             response_header.emplace("Sec-WebSocket-Accept", Crypto::Base64::encode(sha1));
+
+            try {
+              connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
+            }
+            catch(...) {
+            }
 
             if(regex_endpoint.second.on_handshake)
               status_code = regex_endpoint.second.on_handshake(connection, response_header);
