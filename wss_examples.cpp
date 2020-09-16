@@ -103,7 +103,8 @@ int main() {
       server_port.set_value(port);
     });
   });
-  cout << "Server listening on port " << server_port.get_future().get() << endl << endl;
+  cout << "Server listening on port " << server_port.get_future().get() << endl
+       << endl;
 
   // Example 4: Client communication with server
   // Possible output:
