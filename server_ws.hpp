@@ -87,42 +87,8 @@ namespace SimpleWeb {
 
       regex::smatch path_match;
 
-      const asio::ip::tcp::endpoint &remote_endpoint() const noexcept {
-        return endpoint;
-      }
-
-      asio::ip::tcp::endpoint local_endpoint() const noexcept {
-        try {
-          if(auto connection = this->connection.lock())
-            return connection->socket->lowest_layer().local_endpoint();
-        }
-        catch(...) {
-        }
-        return asio::ip::tcp::endpoint();
-      }
-
-      /// Deprecated, please use remote_endpoint().address().to_string() instead.
-      DEPRECATED std::string remote_endpoint_address() const noexcept {
-        try {
-          return endpoint.address().to_string();
-        }
-        catch(...) {
-        }
-        return std::string();
-      }
-
-      /// Deprecated, please use remote_endpoint().port() instead.
-      DEPRECATED unsigned short remote_endpoint_port() const noexcept {
-        try {
-          return endpoint.port();
-        }
-        catch(...) {
-        }
-        return 0;
-      }
-
     private:
-      /// Used to call Server::upgrade.
+      /// Used to call SocketServer::upgrade.
       template <typename... Args>
       Connection(std::shared_ptr<ScopeRunner> handler_runner_, long timeout_idle, Args &&... args) noexcept
           : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), closed(false) {}
@@ -141,7 +107,7 @@ namespace SimpleWeb {
 
       std::atomic<bool> closed;
 
-      asio::ip::tcp::endpoint endpoint; // The endpoint is read in Server::write_handshake and must be stored so that it can be read reliably in all handlers, including on_error
+      asio::ip::tcp::endpoint endpoint; // The endpoint is read in SocketServer::write_handshake and must be stored so that it can be read reliably in all handlers, including on_error
 
       void close() noexcept {
         error_code ec;
@@ -291,6 +257,40 @@ namespace SimpleWeb {
 
         // fin_rsv_opcode=136: message close
         send(std::move(send_stream), std::move(callback), 136);
+      }
+
+      const asio::ip::tcp::endpoint &remote_endpoint() const noexcept {
+        return endpoint;
+      }
+
+      asio::ip::tcp::endpoint local_endpoint() const noexcept {
+        try {
+          if(auto connection = this->connection.lock())
+            return connection->socket->lowest_layer().local_endpoint();
+        }
+        catch(...) {
+        }
+        return asio::ip::tcp::endpoint();
+      }
+
+      /// Deprecated, please use remote_endpoint().address().to_string() instead.
+      DEPRECATED std::string remote_endpoint_address() const noexcept {
+        try {
+          return endpoint.address().to_string();
+        }
+        catch(...) {
+        }
+        return std::string();
+      }
+
+      /// Deprecated, please use remote_endpoint().port() instead.
+      DEPRECATED unsigned short remote_endpoint_port() const noexcept {
+        try {
+          return endpoint.port();
+        }
+        catch(...) {
+        }
+        return 0;
       }
     };
 
