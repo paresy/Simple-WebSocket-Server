@@ -9,7 +9,6 @@ else()
     option(BUILD_TESTING "set ON to build library tests" OFF)
 endif()
 
-
 add_library(simple-websocket-server INTERFACE)
 
 target_include_directories(simple-websocket-server INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
