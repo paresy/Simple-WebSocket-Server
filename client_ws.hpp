@@ -86,6 +86,8 @@ namespace SimpleWeb {
 
       std::atomic<bool> closed;
 
+      asio::ip::tcp::endpoint endpoint; // The endpoint is read in SocketClient::upgrade and must be stored so that it can be read reliably in all handlers, including on_error
+
       void close() noexcept {
         error_code ec;
         socket->lowest_layer().shutdown(asio::ip::tcp::socket::shutdown_both, ec);
@@ -106,7 +108,7 @@ namespace SimpleWeb {
           return;
         }
 
-        timer = std::unique_ptr<asio::steady_timer>(new asio::steady_timer(get_socket_executor(*socket), std::chrono::seconds(seconds)));
+        timer = make_steady_timer(*socket, std::chrono::seconds(seconds));
         std::weak_ptr<Connection> connection_weak(this->shared_from_this()); // To avoid keeping Connection instance alive longer than needed
         timer->async_wait([connection_weak, use_timeout_idle](const error_code &ec) {
           if(!ec) {
@@ -251,6 +253,10 @@ namespace SimpleWeb {
 
         // fin_rsv_opcode=136: message close
         send(out_message, std::move(callback), 136);
+      }
+
+      const asio::ip::tcp::endpoint &remote_endpoint() const noexcept {
+        return endpoint;
       }
     };
 
@@ -408,6 +414,12 @@ namespace SimpleWeb {
       for(auto &header_field : config.header)
         ostream << header_field.first << ": " << header_field.second << "\r\n";
       ostream << "\r\n";
+
+      try {
+        connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
+      }
+      catch(...) {
+      }
 
       connection->in_message = std::shared_ptr<InMessage>(new InMessage());
 

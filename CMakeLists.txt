@@ -3,7 +3,11 @@ cmake_minimum_required (VERSION 3.0)
 project (Simple-WebSocket-Server)
 
 option(USE_STANDALONE_ASIO "set ON to use standalone Asio instead of Boost.Asio" OFF)
-option(BUILD_TESTING "set ON to build library tests" OFF)
+if(CMAKE_SOURCE_DIR STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
+    option(BUILD_TESTING "set ON to build library tests" ON)
+else()
+    option(BUILD_TESTING "set ON to build library tests" OFF)
+endif()
 
 add_library(simple-websocket-server INTERFACE)
 
@@ -59,8 +63,6 @@ if(CMAKE_SOURCE_DIR STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(ws_examples simple-websocket-server)
     add_executable(wss_examples wss_examples.cpp)
     target_link_libraries(wss_examples simple-websocket-server)
-    
-    set(BUILD_TESTING ON)
     
     install(FILES asio_compatibility.hpp server_ws.hpp client_ws.hpp server_wss.hpp client_wss.hpp crypto.hpp utility.hpp status_code.hpp mutex.hpp DESTINATION include/simple-websocket-server)
 endif()

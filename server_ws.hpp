@@ -87,32 +87,8 @@ namespace SimpleWeb {
 
       regex::smatch path_match;
 
-      const asio::ip::tcp::endpoint &remote_endpoint() const noexcept {
-        return endpoint;
-      }
-
-      /// Deprecated, please use remote_endpoint().address().to_string() instead.
-      DEPRECATED std::string remote_endpoint_address() const noexcept {
-        try {
-          return socket->lowest_layer().remote_endpoint().address().to_string();
-        }
-        catch(...) {
-        }
-        return std::string();
-      }
-
-      /// Deprecated, please use remote_endpoint().port() instead.
-      DEPRECATED unsigned short remote_endpoint_port() const noexcept {
-        try {
-          return socket->lowest_layer().remote_endpoint().port();
-        }
-        catch(...) {
-        }
-        return 0;
-      }
-
     private:
-      /// Used to call Server::upgrade.
+      /// Used to call SocketServer::upgrade.
       template <typename... Args>
       Connection(std::shared_ptr<ScopeRunner> handler_runner_, long timeout_idle, Args &&... args) noexcept
           : handler_runner(std::move(handler_runner_)), socket(new socket_type(std::forward<Args>(args)...)), timeout_idle(timeout_idle), closed(false) {}
@@ -131,7 +107,7 @@ namespace SimpleWeb {
 
       std::atomic<bool> closed;
 
-      asio::ip::tcp::endpoint endpoint; // The endpoint is read in Server::write_handshake and must be stored so that it can be read reliably in all handlers, including on_error
+      asio::ip::tcp::endpoint endpoint; // The endpoint is read in SocketServer::write_handshake and must be stored so that it can be read reliably in all handlers, including on_error
 
       void close() noexcept {
         error_code ec;
@@ -150,7 +126,7 @@ namespace SimpleWeb {
           return;
         }
 
-        timer = std::unique_ptr<asio::steady_timer>(new asio::steady_timer(get_socket_executor(*socket), std::chrono::seconds(seconds)));
+        timer = make_steady_timer(*socket, std::chrono::seconds(seconds));
         std::weak_ptr<Connection> connection_weak(this->shared_from_this()); // To avoid keeping Connection instance alive longer than needed
         timer->async_wait([connection_weak](const error_code &ec) {
           if(!ec) {
@@ -281,6 +257,40 @@ namespace SimpleWeb {
 
         // fin_rsv_opcode=136: message close
         send(std::move(send_stream), std::move(callback), 136);
+      }
+
+      const asio::ip::tcp::endpoint &remote_endpoint() const noexcept {
+        return endpoint;
+      }
+
+      asio::ip::tcp::endpoint local_endpoint() const noexcept {
+        try {
+          if(auto connection = this->connection.lock())
+            return connection->socket->lowest_layer().local_endpoint();
+        }
+        catch(...) {
+        }
+        return asio::ip::tcp::endpoint();
+      }
+
+      /// Deprecated, please use remote_endpoint().address().to_string() instead.
+      DEPRECATED std::string remote_endpoint_address() const noexcept {
+        try {
+          return endpoint.address().to_string();
+        }
+        catch(...) {
+        }
+        return std::string();
+      }
+
+      /// Deprecated, please use remote_endpoint().port() instead.
+      DEPRECATED unsigned short remote_endpoint_port() const noexcept {
+        try {
+          return endpoint.port();
+        }
+        catch(...) {
+        }
+        return 0;
       }
     };
 
@@ -530,12 +540,6 @@ namespace SimpleWeb {
     }
 
     void write_handshake(const std::shared_ptr<Connection> &connection) {
-      try {
-          connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
-      }
-      catch (...) {
-      }
-
       for(auto &regex_endpoint : endpoint) {
         regex::smatch path_match;
         if(regex::regex_match(connection->path, path_match, regex_endpoint.first)) {
@@ -553,6 +557,12 @@ namespace SimpleWeb {
             static auto ws_magic_string = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
             auto sha1 = Crypto::sha1(key_it->second + ws_magic_string);
             response_header.emplace("Sec-WebSocket-Accept", Crypto::Base64::encode(sha1));
+
+            try {
+              connection->endpoint = connection->socket->lowest_layer().remote_endpoint();
+            }
+            catch(...) {
+            }
 
             if(regex_endpoint.second.on_handshake)
               status_code = regex_endpoint.second.on_handshake(connection, response_header);
